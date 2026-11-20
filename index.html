@@ -1915,6 +1915,7 @@
     <!-- ==================== APPLICATION LOGIC & DUAL-PERSISTENCE STATE ==================== -->
     <script>
         const STORAGE_KEY = 'newera_budget_v5_state';
+        const SESSION_KEY = 'newera_budget_v5_session';
         const FIREBASE_DB_URL = 'https://new-era-money-default-rtdb.europe-west1.firebasedatabase.app/newera_club_v5.json';
         const IDB_NAME = 'NewEraClubBudgetDB';
         const IDB_STORE = 'stateStore';
@@ -2652,6 +2653,54 @@
             performLogin(user, pass);
         }
 
+        function saveActiveSession(user, tabId = null) {
+            if (!user) return;
+            const payload = JSON.stringify({
+                id: user.id,
+                username: user.username,
+                activeTab: tabId || state.activeTab || 'dashboard'
+            });
+            try { localStorage.setItem(SESSION_KEY, payload); } catch (e) {}
+            try { sessionStorage.setItem(SESSION_KEY, payload); } catch (e) {}
+        }
+
+        function clearActiveSession() {
+            try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+            try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+        }
+
+        function restoreActiveSession() {
+            let raw = null;
+            try { raw = localStorage.getItem(SESSION_KEY); } catch (e) {}
+            if (!raw) {
+                try { raw = sessionStorage.getItem(SESSION_KEY); } catch (e) {}
+            }
+            if (!raw) return false;
+            try {
+                const parsed = JSON.parse(raw);
+                const found = state.admins.find(a =>
+                    (parsed.id && a.id === parsed.id) ||
+                    (parsed.username && a.username.trim().toLowerCase() === parsed.username.trim().toLowerCase())
+                );
+                if (!found) {
+                    clearActiveSession();
+                    return false;
+                }
+                state.currentUser = found;
+                document.getElementById('loginScreen').classList.add('hidden');
+                updateSidebarUserCard();
+                applyRolePermissionsUI();
+                if (parsed.activeTab && !(parsed.activeTab === 'audit' && found.tier !== 'super_admin')) {
+                    switchTab(parsed.activeTab);
+                } else {
+                    refreshAllViews();
+                }
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
         function performLogin(username, password) {
             const found = state.admins.find(
                 a => a.username.trim().toLowerCase() === username.trim().toLowerCase() && a.password === password
@@ -2661,6 +2710,7 @@
                 return;
             }
             state.currentUser = found;
+            saveActiveSession(found, state.activeTab);
             document.getElementById('loginErrorBox').classList.add('hidden');
             document.getElementById('loginScreen').classList.add('hidden');
             document.getElementById('loginUsername').value = '';
@@ -2718,6 +2768,7 @@
 
         function logoutAdmin() {
             state.currentUser = null;
+            clearActiveSession();
             updateLoginScreenStats();
             document.getElementById('loginUsername').value = '';
             document.getElementById('loginPassword').value = '';
@@ -2732,6 +2783,7 @@
                 return;
             }
             state.activeTab = tabId;
+            if (state.currentUser) saveActiveSession(state.currentUser, tabId);
             const tabs = ['dashboard', 'folders', 'ledger', 'members', 'admins', 'audit', 'strategies'];
             tabs.forEach(t => {
                 const sec = document.getElementById(`tab-${t}`);
@@ -4758,9 +4810,21 @@
 
         // --- INITIALIZE ON LOAD ---
         window.onload = async function () {
+            // Fast pre-check so logged-in users don't see login screen flash while Firebase loads
+            try {
+                if (localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY)) {
+                    document.getElementById('loginScreen').classList.add('hidden');
+                }
+            } catch (e) {}
+
             await loadSavedStateAsync();
             updateLoginScreenStats();
-            refreshAllViews();
+
+            const restored = restoreActiveSession();
+            if (!restored) {
+                document.getElementById('loginScreen').classList.remove('hidden');
+                refreshAllViews();
+            }
             lucide.createIcons();
         };
     </script>
